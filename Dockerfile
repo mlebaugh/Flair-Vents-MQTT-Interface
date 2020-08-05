@@ -12,4 +12,4 @@ ENV CLIENT_SECRET None
 RUN pip install paho-mqtt
 RUN pip install git+git://github.com/flair-systems/flair-api-client-py.git
 RUN git clone https://github.com/mlebaugh/Flair-Vents-MQTT-Interface.git
-CMD python /Flair-Vents-MQTT-Interface/vents_bridge.py -id ${HOUSE_ID} -cid ${CLIENT_ID} -cs ${CLIENT_SECRET} -n ${COUNT} -t ${POLL_TIME} -b ${MQTT_BROKER} -p ${MQTT_PORT} -u ${MQTT_USER} -pw ${MQTT_PASSWORD} -m ${MQTT_TOPIC} /Flair-Vents-MQTT-Interface/flair_vents.log
+CMD python /Flair-Vents-MQTT-Interface/vents_bridge.py -id ${HOUSE_ID} -cid ${CLIENT_ID} -cs ${CLIENT_SECRET} -n ${COUNT} -t ${POLL_TIME} -b ${MQTT_BROKER} -p ${MQTT_PORT} -u ${MQTT_USER} -pw ${MQTT_PASSWORD} -m ${MQTT_TOPIC} -l /Flair-Vents-MQTT-Interface/flair_vents.log
