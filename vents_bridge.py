@@ -1175,6 +1175,7 @@ def main():
         if user is not None and password is not None:
             mqttc.username_pw_set(username=user,password=password)
         mqttc.connect(broker, port, arg.t+60)
+        mqttc.subscribe(pub_topic +"/flair/command/#", 0)
         mqttc.loop_start()
         
         structure, expiry_time = getStructure(CLIENT_ID, CLIENT_SECRET, API_ROOT, house_id)
