@@ -20,6 +20,7 @@ import os,sys
 import logging
 from logging.handlers import RotatingFileHandler
 import paho.mqtt.client as paho
+from slugify import slugify
 try:
     import ConfigParser
 except ImportError:
@@ -697,7 +698,7 @@ def setup_logger(logger_name, log_file, level=logging.DEBUG, console=False):
         formatter = logging.Formatter('[%(levelname)1.1s %(asctime)s] (%(threadName)-10s) %(message)s')
         if log_file is not None:
             fileHandler = logging.handlers.RotatingFileHandler(log_file, mode='a', maxBytes=2000000, backupCount=5)
-        fileHandler.setFormatter(formatter)
+            fileHandler.setFormatter(formatter)
         if console == True:
           streamHandler = logging.StreamHandler()
 
@@ -757,14 +758,110 @@ def getStructure(CLIENT_ID, CLIENT_SECRET, API_ROOT, house_id):
             
         log.info("Authenticated for %ds" % (client.expires_in))
         
-        return client.get("structures", id=house_id), time.time() + client.expires_in   #structure for our house id, time authentication expires
+        structures = client.get("structures", id=house_id)
+        if not house_id:
+            structures = structures[0]
+        return structures, time.time() + client.expires_in   #structure for our house id, time authentication expires
+
     except ApiError as e:
         log.error(e.status_code)
         log.error(e.json)
         log.exception(e)
         
     return None, 0
-        
+
+configured_entities = {}
+
+def PublishVent_config(vent_name, vent_data, mqttc=None):
+    if not mqttc or not ha_config_topic:
+        return
+    slug = slugify(vent_name) + "_vent"
+
+    if slug in configured_entities:
+        return
+    configured_entities[slug] = True
+
+    # Battery
+    config = {
+        'name': '%s Battery' % vent_name,
+        'device_class': 'battery',
+        'unit_of_measurement': '%',
+        'expire_after': 300,
+        'state_topic': '%s/vent/%s/bat_percent' % (pub_topic,vent_name)
+    }
+
+    json_str = json.dumps(config)
+    mqttc.publish('%s/sensor/flair/%s_Battery/config' % (ha_config_topic,slug), json_str, qos=0, retain=True)
+
+    # Temperature
+    config = {
+        'name': '%s Temperature' % vent_name,
+        'device_class': 'temperature',
+        'unit_of_measurement': '°C',
+        'expire_after': 300,
+        'state_topic': '%s/vent/%s/Temperature' % (pub_topic,vent_name)
+    }
+
+    json_str = json.dumps(config)
+    mqttc.publish('%s/sensor/flair/%s_Temperature/config' % (ha_config_topic,slug), json_str, qos=0, retain=True)
+
+    # Cover
+    config = {
+        'name': '%s Cover' % vent_name,
+        'device_class': 'damper',
+        'position_topic': '%s/vent/%s/percent_open' % (pub_topic,vent_name),
+        'set_position_topic': '%s/command/vent/%s/percent_open' % (pub_topic,vent_name)
+    }
+
+    json_str = json.dumps(config)
+    mqttc.publish('%s/cover/flair/%s_Cover/config' % (ha_config_topic,slug), json_str, qos=0, retain=True)
+
+def PublishPuck_config(puck_name, puck_data, mqttc=None):
+    if not mqttc or not ha_config_topic:
+        return
+
+    slug = slugify(puck_name) + '_puck'
+    if slug in configured_entities:
+        return
+    configured_entities[slug] = True
+
+    # Battery
+    config = {
+        'name': '%s Battery' % puck_name,
+        'device_class': 'battery',
+        'unit_of_measurement': '%',
+        'expire_after': 300,
+        'state_topic': '%s/puck/%s/bat_percent' % (pub_topic,puck_name)
+    }
+
+    json_str = json.dumps(config)
+    mqttc.publish('%s/sensor/flair/%s_Battery/config' % (ha_config_topic,slug), json_str, qos=0, retain=True)
+
+
+    # Temperature
+    config = {
+        'name': '%s Temperature' % puck_name,
+        'device_class': 'temperature',
+        'unit_of_measurement': '°C',
+        'expire_after': 300,
+        'state_topic': '%s/puck/%s/Temperature' % (pub_topic,puck_name)
+    }
+
+    json_str = json.dumps(config)
+    mqttc.publish('%s/sensor/flair/%s_Temperature/config' % (ha_config_topic,slug), json_str, qos=0, retain=True)
+
+    # Humidity
+    config = {
+        'name': '%s Humidity' % puck_name,
+        'device_class': 'humidity',
+        'unit_of_measurement': '%',
+        'expire_after': 300,
+        'state_topic': '%s/puck/%s/Humidity' % (pub_topic,puck_name)
+    }
+
+    json_str = json.dumps(config)
+    mqttc.publish('%s/sensor/flair/%s_Humidity/config' % (ha_config_topic,slug), json_str, qos=0, retain=True)
+
 def PublishVent_data(structure, mqttc=None, name=None):
     vent_data = {}
     try:
@@ -803,10 +900,11 @@ def PublishVent_data(structure, mqttc=None, name=None):
             if name is None or name == vent.name:
                 log.info("Vent: %s, Latest Reading: %s" % (vent.name, json.dumps(vent_data[vent.name], indent=2, sort_keys=True)))
                 if mqttc is not None:
-                    mqttc.publish('%s/flair/vent/%s/LastUpdate' % (pub_topic,vent.name), "%s" % time.ctime())
+                    PublishVent_config(vent.name, vent_data, mqttc)
+                    mqttc.publish('%s/vent/%s/LastUpdate' % (pub_topic,vent.name), "%s" % time.ctime(), qos=0, retain=True)
                     for data, value in vent_data[vent.name].items():
                         if value is not None:
-                            mqttc.publish('%s/flair/vent/%s/%s' % (pub_topic,vent.name,data), value)
+                            mqttc.publish('%s/vent/%s/%s' % (pub_topic,vent.name,data), value, qos=0, retain=True)
                 else:
                     log.info("Data NOT published")
             
@@ -864,10 +962,11 @@ def PublishPuck_data(structure, mqttc=None, name=None):
             if name is None or name == puck.name:
                 log.info("Puck: %s, Latest Reading: %s" % (puck.name, json.dumps(puck_data[puck.name], indent=2, sort_keys=True)))
                 if mqttc is not None:
-                    mqttc.publish('%s/flair/puck/%s/LastUpdate' % (pub_topic,puck.name), "%s" % time.ctime())
+                    PublishPuck_config(puck.name, puck_data[puck.name], mqttc)
+                    mqttc.publish('%s/puck/%s/LastUpdate' % (pub_topic,puck.name), "%s" % time.ctime(), qos=0, retain=True)
                     for data, value in puck_data[puck.name].items():
                         if value is not None:
-                            mqttc.publish('%s/flair/puck/%s/%s' % (pub_topic,puck.name,data), value)
+                            mqttc.publish('%s/puck/%s/%s' % (pub_topic,puck.name,data), value, qos=0, retain=True)
                 else:
                     log.info("Data NOT published")
         
@@ -970,6 +1069,7 @@ def read_config_file(file="./config.ini"):
         result['broker'] = Config.get(house, "broker")
         result['port'] = Config.getint(house, "port")
         result['pub_topic'] = Config.get(house, "pub_topic")
+        result['ha_config_topic'] = Config.get(house, "ha_config_topic")
         result['user'] = Config.get(house, "user")
         result['password'] = Config.get(house, "password")
 
@@ -1011,6 +1111,9 @@ def update_config_file(arg, file="./config.ini", house_id=None, values=None):
     if values['pub_topic'] != arg.topic  and arg.topic is not None:
         values['pub_topic']=arg.topic
         updated = True
+    if values['ha_config_topic'] != arg.topic  and arg.topic is not None:
+        values['ha_config_topic']=arg.topic
+        updated = True
     if updated:
         write_config_file(house_id=house_id, values=values)
     return house_id, values
@@ -1043,10 +1146,10 @@ def on_message(mosq, obj, msg):
         if command == 'percent_open':
             updateVent(structure, device, int(value))
 
-def on_connect(mosq, obj, rc):
+def on_connect(mosq, obj, flags, rc):
     global mqttc
     #log.info("rc: %s" % str(rc))
-    mqttc.subscribe(pub_topic +"/flair/command/#", 0) #eg openhab/sensors/flair/command/puck/
+    mqttc.subscribe(pub_topic +"/command/#", 0) #eg openhab/sensors/flair/command/puck/
 
 def on_publish(mosq, obj, mid):
     #log.info("published: %s %s" % (str(mid), str(obj)))
@@ -1065,7 +1168,7 @@ def main():
     import argparse
     global log
     global mqttc
-    global pub_topic
+    global pub_topic, ha_config_topic
     global structure
     global Local_tz
     
@@ -1084,6 +1187,7 @@ def main():
     parser.add_argument('-C','--config', action='store_true', help='use config File', default = False)
     parser.add_argument('-D','--debug', action='store_true', help='debug mode', default = False)
     parser.add_argument('-V','--version', action='version',version='%(prog)s {version}'.format(version=__VERSION__))
+    parser.add_argument('-H','--ha', action="store",default=None, help='topic to publish HA config data to. (default=None)')
 
     arg = parser.parse_args()
     
@@ -1108,7 +1212,7 @@ def main():
     log.info("****** Program Started ********")
     log.debug("Debug Mode")
     
-    values = {'broker':'127.0.01', 'port':1883, 'pub_topic':'openhab/sensors'} #defaults
+    values = {'broker':'127.0.01', 'port':1883, 'ha_config_topic': None, 'pub_topic':'openhab/sensors/flair'} #defaults
     config_file = False
     
     if arg.config:
@@ -1124,12 +1228,15 @@ def main():
         house_id = arg.house_id
         values['CLIENT_ID'] = arg.client_id
         values['CLIENT_SECRET'] = arg.client_secret
-        if values['CLIENT_ID'] is None or values['CLIENT_SECRET'] is None or house_id is None:
+        if values['CLIENT_ID'] is None or values['CLIENT_SECRET'] is None:
             log.critical("You must enter your house_id, API CLIENT ID and CLIENT SECRET to access the flair API - get them from hello@flair.co")
             sys.exit(1)
         
         if arg.topic is not None:
             values['pub_topic'] = arg.topic
+
+        if arg.ha is not None:
+            values['ha_config_topic'] = arg.ha
 
         if arg.broker is not None:
             values['broker'] = arg.broker #mosquitto broker host
@@ -1145,6 +1252,7 @@ def main():
             
     log.info("reading house: %s" % house_id)     
     pub_topic = values['pub_topic']
+    ha_config_topic = values['ha_config_topic']
     broker = values['broker']
     port = values['port']
     user = values['user']
@@ -1152,7 +1260,6 @@ def main():
     CLIENT_ID = values['CLIENT_ID']
     CLIENT_SECRET = values['CLIENT_SECRET']
         
-
     mqttc = paho.Client()               #Setup MQTT
     # Assign event callbacks
     mqttc.on_message = on_message
@@ -1171,15 +1278,15 @@ def main():
         forever = True
         
     try:
-        mqttc.will_set(pub_topic+"/flair/LastUpdate", "Offline at: %s" % time.ctime(), 0, False)
+        mqttc.will_set(pub_topic+"/LastUpdate", "Offline at: %s" % time.ctime(), 0, False)
         if user is not None and password is not None:
             mqttc.username_pw_set(username=user,password=password)
         mqttc.connect(broker, port, arg.t+60)
-        mqttc.subscribe(pub_topic +"/flair/command/#", 0)
         mqttc.loop_start()
         
         structure, expiry_time = getStructure(CLIENT_ID, CLIENT_SECRET, API_ROOT, house_id)
-        
+        house_id = structure.id_
+
         while (counter < arg.count or forever):
             try:
                 if time.time() >= expiry_time - arg.t:
@@ -1190,28 +1297,28 @@ def main():
                 if structure is not None:
                     PublishVent_data(structure, mqttc)                  
                     PublishPuck_data(structure, mqttc)               
-                    mqttc.publish(pub_topic+"/flair/LastUpdate", "%s" % time.ctime())
+                    mqttc.publish(pub_topic+"/LastUpdate", "%s" % time.ctime(), qos=0, retain=True)
             
             except ApiError as e:
                 log.error(e.status_code)
                 log.error(e.json)
                 log.exception(e)
-                mqttc.publish(pub_topic+"/flair/LastUpdate", "API Error Updating at: %s" % time.ctime())
+                mqttc.publish(pub_topic+"/LastUpdate", "API Error Updating at: %s" % time.ctime(), qos=0, retain=True)
         
             except ConnectionError as e:    #requests.exceptions.ConnectionError
                 log.exception(e)
-                mqttc.publish(pub_topic+"/flair/LastUpdate", "Connection Error Updating at: %s" % time.ctime())
+                mqttc.publish(pub_topic+"/LastUpdate", "Connection Error Updating at: %s" % time.ctime(), qos=0, retain=True)
                 
             except Exception as e:    #all other exceptions
                 log.exception(e)
-                mqttc.publish(pub_topic+"/flair/LastUpdate", "Exception Error Updating at: %s" % time.ctime())
+                mqttc.publish(pub_topic+"/LastUpdate", "Exception Error Updating at: %s" % time.ctime(), qos=0, retain=True)
             
             if not forever: counter += 1
             time.sleep(arg.t)
         
     except (KeyboardInterrupt, SystemExit):
         log.info("System exit Received - Exiting program")
-        mqttc.publish(pub_topic+"/flair/LastUpdate", "Program Exit at: %s" % time.ctime())
+        mqttc.publish(pub_topic+"/LastUpdate", "Program Exit at: %s" % time.ctime(), qos=0, retain=True)
         
     finally:
         mqttc.loop_stop()
